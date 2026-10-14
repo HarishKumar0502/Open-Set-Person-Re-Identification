@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PS1 Open-Set ReID</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>PS1 · Open-Set Person Re-Identification</h1>
+  <p class="sub">CCTV video → YOLOv8n person detection → ByteTrack tracking → ResNet18 embeddings (512-d) → open-set matching (threshold + margin)</p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Model &amp; gallery</h2>
+    <div class="facts">
+      <span>Gallery: <b>{{ s.gallery_images }}</b> images / <b>{{ s.gallery_identities }}</b> identities ({{ s.gallery_source }})</span>
+      <span>Aggregation: <b>{{ s.aggregation }}</b></span>
+      <span>Default threshold / margin: <b>{{ s.threshold }}</b> / <b>{{ s.margin }}</b></span>
+      <span>Device: <b>{{ s.device }}</b></span>
+    </div>
+    <p class="hint">Each person is labelled with an enrolled Market-1501 identity or <b>UNKNOWN</b>. Defaults are calibrated
+      on held-out identities for ≈5% unknown false-accept rate (see <code>reports/open_set_evaluation.json</code>).
+      Cosine scores are not probabilities.</p>
+  </section>
+
+  <section class="panel" id="video-panel">
+    <h2>Video: detect, track and identify people</h2>
+    <p class="hint">YOLOv8n finds people → ByteTrack links boxes into tracks (a <b>track ID is temporary</b>, not an identity)
+      → a few crops per track are embedded with the ResNet18 Re-ID model → each crop is matched with the open-set rule
+      → the track's label is a vote over its recent crops. Nothing is ever added to the gallery.</p>
+    <form id="vform">
+      <input id="vfile" type="file" accept="video/*,{{ v.extensions }}" required>
+      <button type="submit" id="vstart">Process Video</button>
+      <button type="button" id="vcancel" class="secondary" disabled>Cancel</button>
+    </form>
+    <details class="vsettings" open>
+      <summary>Settings</summary>
+      <div class="vgrid">
+        <label>Re-ID threshold <input id="vthreshold" type="number" step="0.001" min="-1" max="1" value="{{ s.threshold }}">
+          <small>Minimum cosine similarity between a crop and an enrolled identity to accept it. Higher → fewer
+            strangers accepted, more enrolled people rejected. {{ s.threshold }} was calibrated for ≈5% unknown
+            false-accepts on single Market-1501 images; it is a similarity, not a probability.</small></label>
+        <label>Margin <input id="vmargin" type="number" step="0.01" min="0" max="1" value="{{ s.margin }}">
+          <small>Also require the best identity to beat the second best by this much; rejects look-alikes
+            (low inter-class variance).</small></label>
+        <label>Detection confidence <input id="vdet" type="number" step="0.05" min="0.01" max="0.95" value="{{ v.det_confidence }}">
+          <small>YOLO score needed to start a track. Lower finds more (partly hidden) people but adds false boxes.
+            Only boxes ≥ 0.4 are used for Re-ID.</small></label>
+        <label>Frame stride <input id="vstride" type="number" min="1" max="30" value="{{ v.frame_stride }}">
+          <small>Process every Nth frame. 1 = best tracking; 2–3 is faster. The output video has fps / N.</small></label>
+        <label>Re-ID interval <input id="vinterval" type="number" min="1" max="300" value="{{ v.reid_interval }}">
+          <small>Processed frames between Re-ID samples of a track (stable tracks are sampled 5× less often).</small></label>
+        <label>Votes needed <input id="vvotes" type="number" min="1" max="8" value="{{ v.min_votes }}">
+          <small>Accepted crops of the same identity needed before a track is shown as known (window of 8).</small></label>
+        <label>YOLO input size
+          <select id="vimgsz">{% for n in (320, 480, 640, 800, 960, 1280) %}<option value="{{ n }}"{% if n == v.imgsz %} selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+          <small>Larger finds smaller / distant people but is slower.</small></label>
+        <label>Max frames <input id="vmax" type="number" min="0" value="0">
+          <small>Stop after N processed frames (0 = whole video). Useful for a quick test.</small></label>
+      </div>
+    </details>
+    <p class="hint">Max upload {{ v.max_upload_mb }} MB ({{ v.extensions }}). Processing runs on <b>{{ s.device }}</b> in the background; the page stays usable.</p>
+    <div id="vstatus" class="status hidden"></div>
+    <div id="vprogress-wrap" class="hidden"><progress id="vprogress" max="1"></progress> <span id="vprogress-text"></span></div>
+    <div class="videos">
+      <figure><figcaption>Original</figcaption><video id="vorig" controls muted playsinline></video></figure>
+      <figure><figcaption>Processed (boxes · track IDs · identity / UNKNOWN)</figcaption><video id="vout" controls muted playsinline></video></figure>
+    </div>
+    <div id="vdownload" class="downloads hidden"><a id="vdownload-btn" class="btn primary" href="#">⬇ Download processed video</a></div>
+    <div id="vresults"></div>
+  </section>
+</main>
+
+<footer>Research prototype · Market-1501 identities · video tracking via ByteTrack (track IDs are temporary) · see README for limitations</footer>
+<script src="/static/video.js"></script>
+</body>
+</html>

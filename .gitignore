@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# large / generated / licensed data (never committed)
+data/
+artifacts/
+outputs/
+uploads/
+models/**/*.pt
+models/**/*.pth
+models/**/*.onnx
+models/**/*.engine
+*.pth
+.gpu_runtime/
+models/tensorrt/

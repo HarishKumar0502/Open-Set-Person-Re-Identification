@@ -1,0 +1,31 @@
+# Model profile: D_cosface_triplet_hard, i.e. the ReID model that PS2 uses.
+#   python -m source.main --config configs\profiles\cosface_d.yaml   (or  $env:PS1_CONFIG = "configs\profiles\cosface_d.yaml")
+#   python ..\PS1_extras\scripts\query_image.py --config configs\profiles\cosface_d.yaml --image crop.jpg
+#
+# Verified facts (reports/model_integration.json):
+#   * PS2 models/reid/best.pth is byte-identical to artifacts/experiments_v2/D_cosface_triplet_hard/best.pth
+#     (sha256 86859329...). Same torchvision ResNet-18 + 751-way head (CosFace) -> loads with PS1's strict loader.
+#   * PS2 models/onnx/reid_resnet18.onnx (input `input`, output `embedding`, [batch,3,256,128] -> [batch,512])
+#     reproduces this checkpoint (min cosine 0.9999999); it does NOT reproduce PS1's baseline (mean cosine 0.97).
+#   * Embeddings, gallery and threshold below all belong to THIS checkpoint. The baseline gallery/threshold must
+#     not be used with it (the engine refuses: sha256 binding + gallery re-embedding check).
+# Not the default: leakage-free evaluation shows no open-set gain over the baseline (README section 15,
+# reports/calibration/D_cosface_triplet_hard.json: DIR 0.425 vs 0.427 at 5% unknown-FAR).
+extends: ../default.yaml
+
+model:
+  checkpoint: models/reid/best.pth                 # copy of ps2/models/reid/best.pth (same bytes as the D artifact)
+  onnx_path: models/onnx/reid_resnet18.onnx        # copy of ps2/models/onnx/reid_resnet18.onnx (optional; fast CPU/GPU path)
+  # TensorRT engine: models/tensorrt/reid_resnet18_<precision>.engine, built from onnx_path on first start
+  # (a copied PS2 engine is reused only if its .json metadata matches this ONNX file, GPU and TensorRT version).
+
+data:
+  query_embeddings: artifacts/experiments_v2/D_cosface_triplet_hard/embeddings/query_embeddings.npz
+  gallery_embeddings: artifacts/experiments_v2/D_cosface_triplet_hard/embeddings/gallery_embeddings.npz
+
+open_set:
+  # scripts/calibrate_threshold.py (650 non-selection ids, 5 folds, 520 enrolled, prototype + margin 0.05):
+  # 5% unknown-FAR -> 0.855 +- 0.006, test uFAR 0.052 +- 0.012, DIR 0.425 +- 0.034, misID 0.004.
+  threshold: 0.855
+  margin: 0.05
+  calibrated_for_sha256: 86859329af0cdefe2a0cc1cf2e8a502a44e32fa9e077c26e1317ae403aa21fb8

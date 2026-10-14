@@ -1,0 +1,104 @@
+# PS1 - Open-Set Person Re-Identification: default configuration.
+# Relative paths are resolved against the project root (the folder containing this configs/ dir).
+
+model:
+  checkpoint: artifacts/original/ps1_resnet18_3epoch_best.pth
+  architecture: resnet18          # torchvision ResNet18, fc replaced by Identity at inference
+  num_train_classes: 751          # fc.weight shape in the checkpoint is (751, 512)
+  embedding_dim: 512
+  device: auto                    # auto | cpu | cuda   (env PS1_DEVICE)
+  # Inference backend, chosen and verified automatically at start-up (source/logic/model_manager.py):
+  #   tensorrt -> onnx-cuda -> onnx-dml -> pytorch-cuda -> onnx-cpu -> pytorch-cpu
+  # Every candidate must reproduce the PyTorch reference embeddings (cosine >= verify_min_cosine) or it is
+  # skipped. Internal setting (env PS1_REID_BACKEND); users never choose it. Explicit values restrict the
+  # candidates: one of the names above, or the legacy torch / onnx (onnx falls back to PyTorch).
+  backend: auto
+  onnx_path: models/onnx/ps1_resnet18_embedding.onnx   # exported from the checkpoint above (scripts/export_onnx.py)
+  tensorrt_dir: models/tensorrt   # engines are built here from onnx_path, per GPU (auto-built when missing/stale)
+  tensorrt_precision: fp32        # fp32 | fp16 (env PS1_TENSORRT_PRECISION)
+  tensorrt_auto_build: true
+  verify_min_cosine: 0.9995
+  batch_size: 32
+
+preprocessing:
+  # Verified by scripts/verify_artifacts.py: this exact transform reproduces the
+  # supplied embeddings with cosine similarity 1.000000 on Market-1501 images.
+  height: 256
+  width: 128
+  interpolation: bilinear
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+data:
+  market1501_root: data/Market-1501-v15.09.15
+  query_embeddings: artifacts/original/query_embeddings.npz
+  gallery_embeddings: artifacts/original/gallery_embeddings.npz
+
+gallery:
+  # mean_prototype: identity score = cosine to the L2-normalised mean of that identity's
+  #                 gallery embeddings (better DIR at equal FAR in reports/open_set_evaluation.json)
+  # max:            identity score = max cosine over that identity's gallery images
+  aggregation: mean_prototype
+  top_k: 10
+  # Start-up check that the gallery embeddings were produced by model.checkpoint (source/logic/reid/engine.py):
+  # strict = refuse to start on a mismatch, warn = log only, off = skip.
+  consistency_check: strict
+
+open_set:
+  # Accept the top-1 identity only if  score >= threshold  AND  (top1 - top2) >= margin,
+  # otherwise UNKNOWN. Values below come from scripts/evaluate_open_set.py, Protocol B
+  # (600 enrolled / 150 unknown identities, cross-validated, target open-set FAR = 5%):
+  #   prototype+margin0.05 @FAR 5%: threshold 0.856 +- 0.013 -> test unknown-FAR 0.052 +- 0.018,
+  #   DIR 0.428, wrong-identity accepts 0.4%.
+  # The supplied thresholds 0.6848 / 0.6940 were chosen on independent pairs and accept
+  # ~99-100% of unknown people in an open-set gallery search; do NOT use them for rejection.
+  # Cosine scores are not probabilities, and the right threshold depends on gallery size.
+  threshold: 0.856
+  margin: 0.05
+  # The threshold is only valid for the checkpoint it was calibrated on (SHA-256 of model.checkpoint).
+  calibrated_for_sha256: f857e33e2c387d0e09ea8de6f8f583b5a2ac68f05559fd5bb0e4fdde3c6bbdfd
+
+detection:
+  enabled_for_images: false       # set true (or tick the UI box) for full-scene photos
+  yolo_weights: models/detector/yolov8n.pt # official ultralytics weights; auto-downloaded if missing (~6 MB)
+  confidence: 0.4
+  min_box_height: 48              # px; smaller person boxes are skipped
+
+video:
+  frame_stride: 5                 # process every Nth frame
+  max_frames: 0                   # 0 = no limit (counted in processed frames)
+
+video_tracking:
+  # Tracked video pipeline (source/logic/video/video_tracking.py, worker.py, scripts/track_video.py).
+  # Detection -> ByteTrack -> sampled ReID per track -> open-set vote. Uses open_set.threshold/margin above.
+  frame_stride: 1                 # process every Nth frame; ByteTrack is IoU-based, keep 1-2 for walking people
+  max_frames: 0                   # 0 = whole video
+  det_confidence: 0.25            # YOLO score to start / firmly match a track (ByteTrack track_high_thresh)
+  det_low_confidence: 0.1         # weaker boxes may only extend existing tracks (ByteTrack second stage)
+  imgsz: 640                      # YOLO input size; 960-1280 finds small/distant people but is slower
+  output_max_side: 1280           # annotated video longer side (0 = source resolution)
+  tracker:                        # ByteTrack overrides; counted in PROCESSED frames
+    track_buffer: 30              # keep lost tracks this long to survive short occlusions / missed detections
+    match_thresh: 0.8
+  identity:
+    reid_interval: 3              # processed frames between ReID samples while a track's label is unsettled
+    stable_interval: 15           # ... once the vote window is full and the label is stable
+    vote_window: 8                # last N single-crop decisions vote
+    min_votes: 2                  # crops needed before deciding; accept votes needed for KNOWN
+    min_agreement: 0.6            # top identity's share of the accept votes
+    min_known_fraction: 0.25      # top identity's accept votes / all votes in the window
+    min_box_height: 64            # crops smaller than this are not embedded (model input is 256x128)
+    min_box_width: 24
+    min_det_confidence: 0.4       # only embed confidently detected boxes
+    skip_truncated: true          # skip boxes touching the frame border (person probably cut off)
+    max_overlap: 0.3              # skip crops covered >30% by another person box (contaminated embedding)
+    reset_overlap: 0.5            # after being covered >50% (people crossing), re-verify the identity from
+                                  # scratch once separated: ByteTrack may have swapped the people (1.0 = off)
+    batch_size: 32
+
+webapp:
+  host: 127.0.0.1
+  port: 8000
+  max_upload_mb: 15
+  max_video_upload_mb: 1024       # video uploads are streamed to disk, not held in memory
+  video_jobs_dir: outputs/video_jobs

@@ -1,0 +1,37 @@
+# Metric-learning ablation (scripts/train_metric.py --experiment <key>). One major component changes per row.
+# All rows: fine-tune from the supplied baseline checkpoint, same seed, epochs, sampler (P=16 x K=4), lr schedule,
+# identity roles: train = all 751 Market train ids; 100 fixed test-pool ids (data.selection_identities) pick the
+# best epoch and are excluded from every ablation calibration/test protocol. Outputs:
+# artifacts/experiments/<key>/ (best.pth, last.pth, history.json, split.json, embeddings/).
+common:
+  seed: 0
+  epochs: 15                 # 1 PK epoch = one pass over the 751 identities = 46 batches of 64
+  lr: 1.0e-4
+  weight_decay: 5.0e-4
+  p: 16
+  k: 4
+  num_workers: 4
+  selection_far: 0.01
+
+experiments:
+  A1_ce_finetune:          # control: same extra training as B-D, identity loss only (isolates "more epochs")
+    ce_weight: 1.0
+    triplet_weight: 0.0
+  B_ce_triplet_all:        # + metric learning, no hard mining (all valid triplets)
+    ce_weight: 1.0
+    triplet_weight: 1.0
+    mining: batch_all
+    triplet_margin: 0.3
+  C_ce_triplet_hard:       # + batch-hard negative mining (closest different identity in the batch)
+    ce_weight: 1.0
+    triplet_weight: 1.0
+    mining: batch_hard
+    triplet_margin: 0.3
+  D_cosface_triplet_hard:  # margin-based identity head (CosFace, additive cosine margin) instead of linear softmax
+    ce_weight: 1.0
+    head: cosface
+    cosface_scale: 30.0
+    cosface_margin: 0.25
+    triplet_weight: 1.0
+    mining: batch_hard
+    triplet_margin: 0.3
